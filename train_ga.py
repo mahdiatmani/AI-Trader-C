@@ -3,11 +3,16 @@
 Usage:
     python train_ga.py --csv XAUUSD_M5.csv
 
-Stops automatically the moment the best chromosome's *validation* split
-satisfies all of:
-    win_rate         >= GA.target_win_rate          (default 0.80)
-    trades           >= GA.min_trades_for_stop      (default 50)
-    profit_factor    >= GA.min_profit_factor_for_stop (default 1.20)
+Stops automatically the moment the best chromosome's **held-out test
+slice** satisfies ALL of:
+    return_pct       >= GA.target_return_pct          (default +50 %)
+    max_dd           <= GA.max_acceptable_dd          (default 20 %)
+    worst_trade_pct  <= GA.max_worst_trade_pct        (default 5 %)
+    profit_factor    >= GA.min_profit_factor_for_stop (default 1.50)
+    trades           >= GA.min_trades_for_stop        (default 50)
+
+Win rate is intentionally not in the stop criteria — the goal is live
+profit with capital preservation, not a pretty WR number.
 
 The winning chromosome is saved to ga_bot/models/best_chromosome.json
 and is then loadable by run_paper.py / run_live.py.
@@ -27,6 +32,16 @@ from ga_bot.genetic_algorithm import GeneticAlgorithm, GenerationLog
 TRAINING_LOG_PATH = LOGS_DIR / "training.jsonl"
 
 
+def _fmt_split(label: str, m: dict) -> str:
+    return (
+        f"{label} ret={m.get('return_pct', 0.0)*100:+6.1f}% "
+        f"dd={m.get('max_dd', 0.0)*100:5.1f}% "
+        f"worst={m.get('worst_trade_pct', 0.0)*100:4.1f}% "
+        f"pf={m.get('profit_factor', 0.0):4.2f} "
+        f"n={int(m.get('trades', 0)):4d}"
+    )
+
+
 def _print_progress(log: GenerationLog) -> None:
     tm = log.best_train_metrics
     vm = log.best_val_metrics
@@ -34,9 +49,9 @@ def _print_progress(log: GenerationLog) -> None:
     print(
         f"gen {log.generation:03d} | "
         f"fit={log.best_fitness:7.3f} | "
-        f"train wr={tm['win_rate']*100:5.1f}% pf={tm['profit_factor']:5.2f} n={int(tm['trades']):4d} | "
-        f"val wr={vm['win_rate']*100:5.1f}% pf={vm['profit_factor']:5.2f} n={int(vm['trades']):4d} | "
-        f"test wr={em['win_rate']*100:5.1f}% pf={em['profit_factor']:5.2f} n={int(em['trades']):4d} | "
+        f"{_fmt_split('train', tm)} | "
+        f"{_fmt_split('val',   vm)} | "
+        f"{_fmt_split('test',  em)} | "
         f"{log.elapsed_sec:5.1f}s",
         flush=True,
     )
@@ -59,15 +74,30 @@ def main() -> int:
     parser.add_argument("--out", default=str(MODELS_DIR / "best_chromosome.json"))
     parser.add_argument("--generations", type=int, default=None)
     parser.add_argument("--population", type=int, default=None)
-    parser.add_argument("--target-win-rate", type=float, default=None)
+    parser.add_argument(
+        "--target-return", type=float, default=None,
+        help="Target return on TEST slice as a fraction (e.g. 0.50 = +50%%)",
+    )
+    parser.add_argument(
+        "--max-dd", type=float, default=None,
+        help="Max acceptable drawdown on TEST slice as a fraction (e.g. 0.20 = 20%%)",
+    )
+    parser.add_argument(
+        "--max-worst-trade", type=float, default=None,
+        help="Max acceptable single-trade loss as a fraction of starting capital",
+    )
     args = parser.parse_args()
 
     if args.generations is not None:
         CONFIG.ga.max_generations = args.generations
     if args.population is not None:
         CONFIG.ga.population_size = args.population
-    if args.target_win_rate is not None:
-        CONFIG.ga.target_win_rate = args.target_win_rate
+    if args.target_return is not None:
+        CONFIG.ga.target_return_pct = args.target_return
+    if args.max_dd is not None:
+        CONFIG.ga.max_acceptable_dd = args.max_dd
+    if args.max_worst_trade is not None:
+        CONFIG.ga.max_worst_trade_pct = args.max_worst_trade
 
     # Reset training log so the dashboard reflects this run, not previous ones.
     if TRAINING_LOG_PATH.exists():
@@ -78,9 +108,11 @@ def main() -> int:
             "ts": datetime.now(timezone.utc).isoformat(),
             "event": "start",
             "csv": args.csv,
-            "target_win_rate": CONFIG.ga.target_win_rate,
-            "min_trades_for_stop": CONFIG.ga.min_trades_for_stop,
+            "target_return_pct": CONFIG.ga.target_return_pct,
+            "max_acceptable_dd": CONFIG.ga.max_acceptable_dd,
+            "max_worst_trade_pct": CONFIG.ga.max_worst_trade_pct,
             "min_profit_factor_for_stop": CONFIG.ga.min_profit_factor_for_stop,
+            "min_trades_for_stop": CONFIG.ga.min_trades_for_stop,
             "max_generations": CONFIG.ga.max_generations,
             "population_size": CONFIG.ga.population_size,
         }) + "\n")
@@ -93,9 +125,11 @@ def main() -> int:
         f"Symbol={CONFIG.instrument.symbol}  TF={CONFIG.trading.timeframe_minutes}m  "
         f"Leverage=1:{CONFIG.account.leverage}  Start=${CONFIG.account.starting_balance}\n"
         f"Stop criterion (TEST set, fully held out): "
-        f"WR >= {CONFIG.ga.target_win_rate*100:.0f}% "
-        f"AND trades >= {CONFIG.ga.min_trades_for_stop} "
-        f"AND PF >= {CONFIG.ga.min_profit_factor_for_stop}"
+        f"return >= {CONFIG.ga.target_return_pct*100:+.0f}% "
+        f"AND DD <= {CONFIG.ga.max_acceptable_dd*100:.0f}% "
+        f"AND worst trade <= {CONFIG.ga.max_worst_trade_pct*100:.0f}% "
+        f"AND PF >= {CONFIG.ga.min_profit_factor_for_stop:.2f} "
+        f"AND trades >= {CONFIG.ga.min_trades_for_stop}"
     )
 
     ga = GeneticAlgorithm(
@@ -106,17 +140,27 @@ def main() -> int:
     )
     best = ga.run(save_path=Path(args.out))
 
-    test_wr = best.metrics.get("test_win_rate", 0.0)
-    test_n = int(best.metrics.get("test_trades", 0))
+    test_ret = best.metrics.get("test_return_pct", 0.0)
+    test_dd = best.metrics.get("test_max_dd", 0.0)
+    test_worst = best.metrics.get("test_worst_trade_pct", 0.0)
     test_pf = best.metrics.get("test_profit_factor", 0.0)
+    test_n = int(best.metrics.get("test_trades", 0))
 
     print("\n=== TRAINING DONE ===")
     print(f"Saved to: {args.out}")
-    print(f"Held-out TEST: win_rate={test_wr*100:.2f}%  trades={test_n}  profit_factor={test_pf:.2f}")
+    print(
+        f"Held-out TEST: return={test_ret*100:+.2f}%  "
+        f"max_dd={test_dd*100:.2f}%  "
+        f"worst_trade={test_worst*100:.2f}%  "
+        f"PF={test_pf:.2f}  "
+        f"trades={test_n}"
+    )
 
     target_hit = (
-        test_wr >= CONFIG.ga.target_win_rate
-        and test_n >= CONFIG.ga.min_trades_for_stop
+        test_n >= CONFIG.ga.min_trades_for_stop
+        and test_ret >= CONFIG.ga.target_return_pct
+        and test_dd <= CONFIG.ga.max_acceptable_dd
+        and test_worst <= CONFIG.ga.max_worst_trade_pct
         and test_pf >= CONFIG.ga.min_profit_factor_for_stop
     )
     with TRAINING_LOG_PATH.open("a", encoding="utf-8") as f:
@@ -125,9 +169,11 @@ def main() -> int:
             "event": "done",
             "target_hit": bool(target_hit),
             "saved_to": args.out,
-            "test_win_rate": test_wr,
-            "test_trades": test_n,
+            "test_return_pct": test_ret,
+            "test_max_dd": test_dd,
+            "test_worst_trade_pct": test_worst,
             "test_profit_factor": test_pf,
+            "test_trades": test_n,
         }) + "\n")
 
     if target_hit:

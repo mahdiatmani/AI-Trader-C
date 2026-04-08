@@ -62,13 +62,15 @@ class GAConfig:
     mutation_sigma: float = 0.15     # gaussian step size in normalized [0,1] space
     random_seed: int = 42
 
-    # Stopping criteria — training halts when ALL of these are met
-    # on the *validation* split (not training, to avoid overfitting):
-    target_win_rate: float = 0.80
+    # Stopping criteria — training halts when ALL of these are met on
+    # the **TEST** split (fully held out, the GA never selects on it).
+    # Win rate is intentionally NOT in this list. The user's goal is
+    # live profit with capital preservation, not a pretty WR number.
+    target_return_pct: float = 0.50          # +50 % on the held-out test slice
+    max_acceptable_dd: float = 0.20          # never deeper than 20 % peak-to-trough
+    max_worst_trade_pct: float = 0.05        # no single trade may lose >5 % of starting capital
+    min_profit_factor_for_stop: float = 1.50 # gross win / gross loss ≥ 1.5
     min_trades_for_stop: int = 50
-    # Also require a positive profit factor so we don't accept a strategy
-    # that wins often but loses big on the few losers.
-    min_profit_factor_for_stop: float = 1.20
 
 
 @dataclass

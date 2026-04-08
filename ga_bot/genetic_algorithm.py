@@ -3,13 +3,15 @@
 Three-way walk-forward split:
     train (60%)  →  every chromosome backtests here for fitness
     val   (20%)  →  every chromosome ALSO backtests here so the fitness
-                    function can punish overfitting (train_wr >> val_wr)
+                    function can punish overfitting and reward
+                    risk-adjusted profit (return / DD)
     test  (20%)  →  fully held out. Only the stop criterion looks at it.
 
-The stop check fires the moment the **test** slice's win rate is at
-least `target_win_rate` AND the candidate has enough trades AND a
-profit factor above the configured floor. Because the GA never selects
-on test, an 80% win rate there is meaningful (not memorized).
+The stop check fires the moment the **test** slice produces enough
+trades AND a target return % AND a max drawdown under the cap AND a
+worst single-trade loss under the cap AND a profit factor above the
+floor. Win rate is intentionally not part of this — the user's goal is
+live profit with capital preservation, not a pretty WR number.
 """
 
 from __future__ import annotations
@@ -100,7 +102,9 @@ class GeneticAlgorithm:
     def _meets_stop_criteria(self, test_metrics: Dict[str, float]) -> bool:
         return (
             test_metrics["trades"] >= self.cfg.min_trades_for_stop
-            and test_metrics["win_rate"] >= self.cfg.target_win_rate
+            and test_metrics["return_pct"] >= self.cfg.target_return_pct
+            and test_metrics["max_dd"] <= self.cfg.max_acceptable_dd
+            and test_metrics["worst_trade_pct"] <= self.cfg.max_worst_trade_pct
             and test_metrics["profit_factor"] >= self.cfg.min_profit_factor_for_stop
         )
 

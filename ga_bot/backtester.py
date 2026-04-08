@@ -36,6 +36,7 @@ class BacktestResult:
     final_equity: float = 0.0
 
     def metrics(self) -> Dict[str, float]:
+        start = float(CONFIG.account.starting_balance)
         n = len(self.trades)
         if n == 0:
             return {
@@ -43,7 +44,10 @@ class BacktestResult:
                 "win_rate": 0.0,
                 "profit_factor": 0.0,
                 "net_pnl": 0.0,
+                "return_pct": 0.0,
                 "max_dd": 1.0,
+                "worst_trade_pct": 0.0,
+                "calmar": 0.0,
                 "expectancy": 0.0,
                 "sharpe": 0.0,
             }
@@ -55,7 +59,7 @@ class BacktestResult:
         gross_loss = float(-losses.sum())
         profit_factor = gross_win / gross_loss if gross_loss > 0 else (gross_win if gross_win > 0 else 0.0)
 
-        eq = self.equity_curve.values if len(self.equity_curve) else np.array([CONFIG.account.starting_balance])
+        eq = self.equity_curve.values if len(self.equity_curve) else np.array([start])
         peak = np.maximum.accumulate(eq)
         dd = (peak - eq) / np.maximum(peak, 1e-9)
         max_dd = float(dd.max()) if len(dd) else 0.0
@@ -63,12 +67,29 @@ class BacktestResult:
         rets = pd.Series(eq).pct_change().dropna()
         sharpe = float(rets.mean() / rets.std() * np.sqrt(252 * 24 * 12)) if rets.std() > 0 else 0.0
 
+        # Profit-first metrics. These are what the new fitness function
+        # actually optimizes against — return %, Calmar (return / DD),
+        # and the worst single-trade loss as a fraction of starting capital.
+        net_pnl = float(pnls.sum())
+        return_pct = net_pnl / max(start, 1e-9)
+        worst_pnl = float(pnls.min())
+        worst_trade_pct = abs(min(0.0, worst_pnl)) / max(start, 1e-9)
+        if max_dd > 1e-4:
+            calmar = return_pct / max_dd
+        else:
+            # No drawdown observed: treat profit as "infinitely" risk-adjusted,
+            # but cap so it can't dominate the fitness.
+            calmar = return_pct * 10.0 if return_pct > 0 else 0.0
+
         return {
             "trades": n,
             "win_rate": win_rate,
             "profit_factor": profit_factor,
-            "net_pnl": float(pnls.sum()),
+            "net_pnl": net_pnl,
+            "return_pct": return_pct,
             "max_dd": max_dd,
+            "worst_trade_pct": worst_trade_pct,
+            "calmar": calmar,
             "expectancy": float(pnls.mean()),
             "sharpe": sharpe,
         }

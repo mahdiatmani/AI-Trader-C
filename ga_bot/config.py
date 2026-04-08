@@ -81,9 +81,17 @@ class BacktestConfig:
     # If both SL and TP could plausibly fill in the same bar, assume the
     # SL hit first (conservative).
     pessimistic_fills: bool = True
-    # Walk-forward split: first 80 % of bars are training, last 20 % is
-    # the held-out validation set used for the stop criterion.
-    train_split: float = 0.80
+    # Walk-forward 60 / 20 / 20 split (oldest → newest):
+    #   train_split  →  used to backtest each chromosome (the GA *sees*
+    #                   this slice during evolution)
+    #   val_split    →  also backtested for every chromosome, fed into
+    #                   the fitness function as the "out-of-sample"
+    #                   signal that penalizes overfit
+    #   the remaining 1 - train - val is the **test set**: completely
+    #   held out, used only for the stop criterion. The GA never sees
+    #   it during selection.
+    train_split: float = 0.60
+    val_split: float = 0.20
 
 
 @dataclass

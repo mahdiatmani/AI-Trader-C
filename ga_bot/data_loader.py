@@ -63,6 +63,30 @@ def load_csv(filename: str) -> pd.DataFrame:
 def split_train_val(
     df: pd.DataFrame, train_fraction: float = CONFIG.backtest.train_split
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Two-way walk-forward split (kept for backwards compat)."""
     n = len(df)
     cut = int(n * train_fraction)
     return df.iloc[:cut].copy(), df.iloc[cut:].copy()
+
+
+def split_train_val_test(
+    df: pd.DataFrame,
+    train_fraction: float = CONFIG.backtest.train_split,
+    val_fraction: float = CONFIG.backtest.val_split,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Three-way walk-forward split (oldest → newest).
+
+    Train and validation are both seen by the GA (train as the fitness
+    backbone, val as the overfit check). Test is completely held out
+    and only the stop criterion looks at it.
+    """
+    n = len(df)
+    train_end = int(n * train_fraction)
+    val_end = train_end + int(n * val_fraction)
+    if val_end >= n:
+        val_end = n - 1
+    return (
+        df.iloc[:train_end].copy(),
+        df.iloc[train_end:val_end].copy(),
+        df.iloc[val_end:].copy(),
+    )

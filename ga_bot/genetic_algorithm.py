@@ -1,9 +1,15 @@
 """The GA engine: population init → evaluate → select → crossover → mutate.
 
-Stops as soon as the *validation* split's win rate is at least
-`target_win_rate` AND the candidate has enough trades AND a profit factor
-above the configured floor. This is the user's "stop training when WR ≥ 80%"
-gate, defended against trivial 5-trade strategies.
+Three-way walk-forward split:
+    train (60%)  →  every chromosome backtests here for fitness
+    val   (20%)  →  every chromosome ALSO backtests here so the fitness
+                    function can punish overfitting (train_wr >> val_wr)
+    test  (20%)  →  fully held out. Only the stop criterion looks at it.
+
+The stop check fires the moment the **test** slice's win rate is at
+least `target_win_rate` AND the candidate has enough trades AND a
+profit factor above the configured floor. Because the GA never selects
+on test, an 80% win rate there is meaningful (not memorized).
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ class GenerationLog:
     best_fitness: float
     best_train_metrics: Dict[str, float]
     best_val_metrics: Dict[str, float]
+    best_test_metrics: Dict[str, float]
     elapsed_sec: float
 
 
@@ -37,12 +44,14 @@ class GeneticAlgorithm:
         self,
         train_df: pd.DataFrame,
         val_df: pd.DataFrame,
+        test_df: pd.DataFrame,
         on_generation: Optional[Callable[[GenerationLog], None]] = None,
     ):
         self.cfg = CONFIG.ga
         self.rng = np.random.default_rng(self.cfg.random_seed)
         self.train_bt = Backtester(train_df)
         self.val_bt = Backtester(val_df)
+        self.test_bt = Backtester(test_df)
         self.on_generation = on_generation
         self.history: List[GenerationLog] = []
 
@@ -77,21 +86,22 @@ class GeneticAlgorithm:
     # ---------- evaluation ----------
     def _evaluate(self, c: Chromosome) -> None:
         strat = Strategy(c)
-        result = self.train_bt.run(strat)
-        m = evaluate(result, min_trades=30)
+        train_result = self.train_bt.run(strat)
+        val_result = self.val_bt.run(strat)
+        m = evaluate(train_result, val_result)
         c.fitness = m["fitness"]
         c.metrics = m
 
-    def _validate(self, c: Chromosome) -> Dict[str, float]:
-        result = self.val_bt.run(Strategy(c))
+    def _test(self, c: Chromosome) -> Dict[str, float]:
+        result = self.test_bt.run(Strategy(c))
         return result.metrics()
 
     # ---------- stopping rule ----------
-    def _meets_stop_criteria(self, val_metrics: Dict[str, float]) -> bool:
+    def _meets_stop_criteria(self, test_metrics: Dict[str, float]) -> bool:
         return (
-            val_metrics["trades"] >= self.cfg.min_trades_for_stop
-            and val_metrics["win_rate"] >= self.cfg.target_win_rate
-            and val_metrics["profit_factor"] >= self.cfg.min_profit_factor_for_stop
+            test_metrics["trades"] >= self.cfg.min_trades_for_stop
+            and test_metrics["win_rate"] >= self.cfg.target_win_rate
+            and test_metrics["profit_factor"] >= self.cfg.min_profit_factor_for_stop
         )
 
     # ---------- main loop ----------
@@ -126,28 +136,42 @@ class GeneticAlgorithm:
             pop = new_pop
 
             best = pop[0]
-            val_metrics = self._validate(best)
+            test_metrics = self._test(best)
 
             if best.fitness > best_overall.fitness:
                 best_overall = best
 
+            # The GenerationLog still wants the same fields the dashboard
+            # / printer expect. Pull train and val out of the metrics
+            # dict that fitness.evaluate() built.
+            train_view = {
+                k.replace("train_", ""): v
+                for k, v in best.metrics.items()
+                if k.startswith("train_")
+            }
+            val_view = {
+                k.replace("val_", ""): v
+                for k, v in best.metrics.items()
+                if k.startswith("val_")
+            }
+
             log = GenerationLog(
                 generation=gen,
                 best_fitness=best.fitness,
-                best_train_metrics=best.metrics,
-                best_val_metrics=val_metrics,
+                best_train_metrics=train_view,
+                best_val_metrics=val_view,
+                best_test_metrics=test_metrics,
                 elapsed_sec=time.time() - t0,
             )
             self.history.append(log)
             if self.on_generation is not None:
                 self.on_generation(log)
 
-            # ----- stop check -----
-            if self._meets_stop_criteria(val_metrics):
-                # Persist with both train and val metrics attached.
+            # ----- stop check (TEST only) -----
+            if self._meets_stop_criteria(test_metrics):
                 best.metrics = {
                     **best.metrics,
-                    **{f"val_{k}": v for k, v in val_metrics.items()},
+                    **{f"test_{k}": v for k, v in test_metrics.items()},
                 }
                 best.save(save_path)
                 return best
@@ -156,7 +180,7 @@ class GeneticAlgorithm:
         # user can inspect it and resume training later.
         best_overall.metrics = {
             **best_overall.metrics,
-            **{f"val_{k}": v for k, v in self._validate(best_overall).items()},
+            **{f"test_{k}": v for k, v in self._test(best_overall).items()},
         }
         best_overall.save(save_path)
         return best_overall

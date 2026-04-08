@@ -94,6 +94,12 @@ class BacktestConfig:
     #   it during selection.
     train_split: float = 0.60
     val_split: float = 0.20
+    # The train slice is further chopped into N contiguous chronological
+    # sub-folds. Fitness uses the WORST fold + val as the bottleneck for
+    # every base metric (return, DD, PF, worst trade). This forces the
+    # GA to find a chromosome that survives multiple sub-regimes inside
+    # train, not one that overfits to a single trend within it.
+    n_train_folds: int = 4
 
 
 @dataclass

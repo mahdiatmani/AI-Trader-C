@@ -1,10 +1,14 @@
 """The GA engine: population init → evaluate → select → crossover → mutate.
 
-Three-way walk-forward split:
-    train (60%)  →  every chromosome backtests here for fitness
-    val   (20%)  →  every chromosome ALSO backtests here so the fitness
-                    function can punish overfitting and reward
-                    risk-adjusted profit (return / DD)
+Three-way walk-forward split, with the train slice further chopped
+into N contiguous sub-folds for regime robustness:
+
+    train (60%)  →  N=4 sub-folds, each backtested separately. Fitness
+                    uses the WORST fold (worst return, deepest DD, etc)
+                    so a chromosome that nails one regime in train but
+                    fails on another can never win.
+    val   (20%)  →  also backtested for every chromosome, treated as
+                    the (N+1)-th slice in the worst-of-all aggregation.
     test  (20%)  →  fully held out. Only the stop criterion looks at it.
 
 The stop check fires the moment the **test** slice produces enough
@@ -12,6 +16,12 @@ trades AND a target return % AND a max drawdown under the cap AND a
 worst single-trade loss under the cap AND a profit factor above the
 floor. Win rate is intentionally not part of this — the user's goal is
 live profit with capital preservation, not a pretty WR number.
+
+Stagnation injection: if best fitness fails to improve by > 1e-3 for
+``stagnation_patience`` consecutive generations, 30 % of the population
+gets replaced with fresh random chromosomes (elites are preserved).
+This is the safety net for the kind of fitness lock the user hit on
+the Ubuntu box at gen 89→153.
 """
 
 from __future__ import annotations
@@ -30,6 +40,10 @@ from .config import CONFIG, MODELS_DIR
 from .fitness import evaluate
 from .strategy import Strategy
 
+STAGNATION_PATIENCE = 25
+STAGNATION_INJECT_FRACTION = 0.30
+STAGNATION_IMPROVEMENT_EPS = 1e-3
+
 
 @dataclass
 class GenerationLog:
@@ -44,14 +58,16 @@ class GenerationLog:
 class GeneticAlgorithm:
     def __init__(
         self,
-        train_df: pd.DataFrame,
+        train_folds: List[pd.DataFrame],
         val_df: pd.DataFrame,
         test_df: pd.DataFrame,
         on_generation: Optional[Callable[[GenerationLog], None]] = None,
     ):
+        if not train_folds:
+            raise ValueError("train_folds must contain at least one DataFrame")
         self.cfg = CONFIG.ga
         self.rng = np.random.default_rng(self.cfg.random_seed)
-        self.train_bt = Backtester(train_df)
+        self.train_bts: List[Backtester] = [Backtester(df) for df in train_folds]
         self.val_bt = Backtester(val_df)
         self.test_bt = Backtester(test_df)
         self.on_generation = on_generation
@@ -88,9 +104,9 @@ class GeneticAlgorithm:
     # ---------- evaluation ----------
     def _evaluate(self, c: Chromosome) -> None:
         strat = Strategy(c)
-        train_result = self.train_bt.run(strat)
+        train_results = [bt.run(strat) for bt in self.train_bts]
         val_result = self.val_bt.run(strat)
-        m = evaluate(train_result, val_result)
+        m = evaluate(train_results, val_result)
         c.fitness = m["fitness"]
         c.metrics = m
 
@@ -117,6 +133,7 @@ class GeneticAlgorithm:
         pop.sort(key=lambda c: c.fitness, reverse=True)
 
         best_overall: Chromosome = pop[0]
+        last_improvement_gen = 0
 
         for gen in range(1, self.cfg.max_generations + 1):
             t0 = time.time()
@@ -133,6 +150,21 @@ class GeneticAlgorithm:
                 if len(new_pop) < self.cfg.population_size:
                     new_pop.append(c2)
 
+            # ----- stagnation injection: drop in fresh blood if the
+            # best fitness hasn't moved in a while. Elites are kept so
+            # we never lose the current champion. -----
+            stagnated_for = gen - last_improvement_gen
+            if stagnated_for >= STAGNATION_PATIENCE:
+                inject_n = int(self.cfg.population_size * STAGNATION_INJECT_FRACTION)
+                # Replace the WORST inject_n non-elite slots with random
+                # chromosomes. The best are at the front; the worst are
+                # at the back.
+                if inject_n > 0:
+                    for i in range(self.cfg.population_size - inject_n,
+                                   self.cfg.population_size):
+                        new_pop[i] = Chromosome.random(self.rng)
+                last_improvement_gen = gen  # reset patience clock
+
             # ----- evaluate (skip already-evaluated elites) -----
             for c in new_pop[self.cfg.elite_count :]:
                 self._evaluate(c)
@@ -142,17 +174,28 @@ class GeneticAlgorithm:
             best = pop[0]
             test_metrics = self._test(best)
 
-            if best.fitness > best_overall.fitness:
+            if best.fitness > best_overall.fitness + STAGNATION_IMPROVEMENT_EPS:
                 best_overall = best
+                last_improvement_gen = gen
 
             # The GenerationLog still wants the same fields the dashboard
-            # / printer expect. Pull train and val out of the metrics
-            # dict that fitness.evaluate() built.
+            # / printer expect. The bare ``train_*`` keys in best.metrics
+            # are already the WORST fold (set by fitness.evaluate), so
+            # the train view shows the bottleneck the GA optimized
+            # against. val_* keys are val.
             train_view = {
                 k.replace("train_", ""): v
                 for k, v in best.metrics.items()
-                if k.startswith("train_")
+                if k.startswith("train_") and not k.startswith("train_fold")
             }
+            # If for some reason no bare train_* keys exist, fall back
+            # to fold 0.
+            if not train_view:
+                train_view = {
+                    k.replace("train_fold0_", ""): v
+                    for k, v in best.metrics.items()
+                    if k.startswith("train_fold0_")
+                }
             val_view = {
                 k.replace("val_", ""): v
                 for k, v in best.metrics.items()

@@ -14,7 +14,7 @@ Drop your CSV in `./data/` and pass the file name to `load_csv`.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
+from typing import List, Tuple
 
 import pandas as pd
 
@@ -90,3 +90,34 @@ def split_train_val_test(
         df.iloc[train_end:val_end].copy(),
         df.iloc[val_end:].copy(),
     )
+
+
+def split_train_folds_val_test(
+    df: pd.DataFrame,
+    n_folds: int = CONFIG.backtest.n_train_folds,
+    train_fraction: float = CONFIG.backtest.train_split,
+    val_fraction: float = CONFIG.backtest.val_split,
+) -> Tuple[List[pd.DataFrame], pd.DataFrame, pd.DataFrame]:
+    """Same chronological split, but train is chopped into N sub-folds.
+
+    Returns ``(train_folds, val_df, test_df)`` where ``train_folds`` is a
+    list of N contiguous chronological slices of the train portion. The
+    fitness function evaluates the chromosome on each fold separately so
+    a strategy that only works on one regime inside train gets crushed
+    by the worst-of-all-folds aggregation.
+
+    val and test are unchanged from `split_train_val_test`.
+    """
+    if n_folds < 1:
+        raise ValueError(f"n_folds must be >= 1, got {n_folds}")
+    train_df, val_df, test_df = split_train_val_test(df, train_fraction, val_fraction)
+    n = len(train_df)
+    if n_folds == 1:
+        return [train_df], val_df, test_df
+    fold_size = n // n_folds
+    folds: List[pd.DataFrame] = []
+    for i in range(n_folds):
+        start = i * fold_size
+        end = (i + 1) * fold_size if i < n_folds - 1 else n
+        folds.append(train_df.iloc[start:end].copy())
+    return folds, val_df, test_df

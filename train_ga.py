@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ga_bot.config import CONFIG, LOGS_DIR, MODELS_DIR
-from ga_bot.data_loader import load_csv, split_train_val_test
+from ga_bot.data_loader import load_csv, split_train_folds_val_test
 from ga_bot.genetic_algorithm import GeneticAlgorithm, GenerationLog
 
 TRAINING_LOG_PATH = LOGS_DIR / "training.jsonl"
@@ -122,11 +122,16 @@ def main() -> int:
 
     print(f"Loading {args.csv} ...")
     df = load_csv(args.csv)
-    train_df, val_df, test_df = split_train_val_test(df)
+    train_folds, val_df, test_df = split_train_folds_val_test(df)
+    fold_sizes = " ".join(f"f{i}={len(f):,}" for i, f in enumerate(train_folds))
+    train_total = sum(len(f) for f in train_folds)
     print(
-        f"Loaded {len(df):,} bars  |  train={len(train_df):,}  val={len(val_df):,}  test={len(test_df):,}\n"
+        f"Loaded {len(df):,} bars  |  train={train_total:,} ({len(train_folds)} folds: {fold_sizes})  "
+        f"val={len(val_df):,}  test={len(test_df):,}\n"
         f"Symbol={CONFIG.instrument.symbol}  TF={CONFIG.trading.timeframe_minutes}m  "
         f"Leverage=1:{CONFIG.account.leverage}  Start=${CONFIG.account.starting_balance}\n"
+        f"Fitness rule: every train fold AND val must be profitable; base "
+        f"metrics use the WORST slice across all {len(train_folds)+1}.\n"
         f"Stop criterion (TEST set, fully held out): "
         f"return >= {CONFIG.ga.target_return_pct*100:+.0f}% "
         f"AND DD <= {CONFIG.ga.max_acceptable_dd*100:.0f}% "
@@ -136,7 +141,7 @@ def main() -> int:
     )
 
     ga = GeneticAlgorithm(
-        train_df=train_df,
+        train_folds=train_folds,
         val_df=val_df,
         test_df=test_df,
         on_generation=_print_progress,

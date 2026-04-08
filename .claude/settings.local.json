@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ':*)",
+      "Bash(rm ga_bot/models/best_chromosome.json)",
+      "Bash(find . -type d -name __pycache__ -prune -exec rm -rf {} +)",
+      "Bash(ls *.py requirements.txt)"
+    ]
+  }
+}

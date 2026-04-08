@@ -7,7 +7,8 @@
       "Bash(ls *.py requirements.txt)",
       "Bash(python -c \"import MetaTrader5 as mt5; print\\('mt5 ok', mt5.__version__\\)\")",
       "Bash(python -c \"import yfinance; print\\('yf ok', yfinance.__version__\\)\")",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(rm -f logs/heartbeat.json logs/training.jsonl)"
     ]
   }
 }

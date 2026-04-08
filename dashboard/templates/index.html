@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GA Bot — {{ symbol }}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #131826;
+    --panel-2: #1b2233;
+    --border: #232c44;
+    --text: #e6edf3;
+    --muted: #8a93a6;
+    --accent: #4fd1c5;
+    --good: #3ddc97;
+    --bad: #ff6b6b;
+    --warn: #f5b73f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header h1 span { color: var(--accent); }
+  .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 8px;
+  }
+  .badge.alive   { background: rgba(61,220,151,.15); color: var(--good); }
+  .badge.stale   { background: rgba(255,107,107,.15); color: var(--bad); }
+  .badge.training{ background: rgba(245,183,63,.15); color: var(--warn); }
+  .badge.idle    { background: rgba(138,147,166,.15); color: var(--muted); }
+
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .card .value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+  .card .sub   { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .pos { color: var(--good); }
+  .neg { color: var(--bad); }
+
+  .row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+  @media (max-width: 1000px) { .row { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+
+  .chart-wrap { position: relative; height: 280px; }
+  .training-wrap { position: relative; height: 240px; margin-top: 12px; }
+
+  footer {
+    text-align: center;
+    color: var(--muted);
+    padding: 24px;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>GA Trader <span>· {{ symbol }}</span> <span id="statusBadge" class="badge idle">loading…</span></h1>
+  <div id="lastUpdated" class="badge idle">—</div>
+</header>
+
+<main>
+  <div class="grid">
+    <div class="card">
+      <div class="label">Balance</div>
+      <div class="value" id="balance">—</div>
+      <div class="sub" id="startingBalance">start: —</div>
+    </div>
+    <div class="card">
+      <div class="label">Equity</div>
+      <div class="value" id="equity">—</div>
+      <div class="sub" id="equityDelta">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Open Positions</div>
+      <div class="value" id="openPositions">—</div>
+      <div class="sub" id="lastBar">last bar: —</div>
+    </div>
+    <div class="card">
+      <div class="label">Win Rate</div>
+      <div class="value" id="winRate">—</div>
+      <div class="sub" id="tradesSummary">— wins / — losses</div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:24px;">
+    <div class="panel">
+      <h2>Equity curve</h2>
+      <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Heartbeat</h2>
+      <table>
+        <tbody id="hbTable">
+          <tr><td colspan="2">waiting for heartbeat…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:24px;">
+    <div class="panel">
+      <h2>Recent journal</h2>
+      <table>
+        <thead><tr><th>Time</th><th>Event</th><th>Side</th><th>Price</th><th>PnL</th><th>Balance</th></tr></thead>
+        <tbody id="journalTable"><tr><td colspan="6">—</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Training</h2>
+      <div id="trainingMeta" class="sub">no training run yet</div>
+      <div class="training-wrap"><canvas id="trainingChart"></canvas></div>
+    </div>
+  </div>
+</main>
+
+<footer>auto-refresh every 5s · pulls /api/status, /api/equity, /api/journal, /api/training</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtMoney = (v) => v == null ? "—" : "$" + Number(v).toFixed(2);
+const fmtPct = (v) => v == null ? "—" : (Number(v) * 100).toFixed(1) + "%";
+const fmtNum = (v) => v == null ? "—" : Number(v).toLocaleString();
+const tokenParam = new URLSearchParams(window.location.search).get("token");
+const apiUrl = (path) => tokenParam ? `${path}?token=${encodeURIComponent(tokenParam)}` : path;
+
+let equityChart, trainingChart;
+
+function makeEquityChart() {
+  const ctx = $("equityChart").getContext("2d");
+  equityChart = new Chart(ctx, {
+    type: "line",
+    data: { labels: [], datasets: [{
+      label: "Balance ($)",
+      data: [],
+      borderColor: "#4fd1c5",
+      backgroundColor: "rgba(79,209,197,.15)",
+      tension: .2,
+      borderWidth: 2,
+      pointRadius: 0,
+      fill: true,
+    }]},
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#8a93a6", maxTicksLimit: 8 }, grid: { color: "#232c44" } },
+        y: { ticks: { color: "#8a93a6" }, grid: { color: "#232c44" } }
+      }
+    }
+  });
+}
+
+function makeTrainingChart() {
+  const ctx = $("trainingChart").getContext("2d");
+  trainingChart = new Chart(ctx, {
+    type: "line",
+    data: { labels: [], datasets: [
+      { label: "val win rate", data: [], borderColor: "#3ddc97", backgroundColor: "rgba(61,220,151,.1)", tension: .2, yAxisID: "y", borderWidth: 2, pointRadius: 0 },
+      { label: "fitness",      data: [], borderColor: "#f5b73f", backgroundColor: "rgba(245,183,63,.1)", tension: .2, yAxisID: "y1", borderWidth: 2, pointRadius: 0 },
+    ]},
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: "#e6edf3" } } },
+      scales: {
+        x: { ticks: { color: "#8a93a6", maxTicksLimit: 10 }, grid: { color: "#232c44" } },
+        y:  { position: "left",  ticks: { color: "#3ddc97", callback: v => (v*100).toFixed(0)+"%" }, grid: { color: "#232c44" }, min: 0, max: 1 },
+        y1: { position: "right", ticks: { color: "#f5b73f" }, grid: { drawOnChartArea: false } }
+      }
+    }
+  });
+}
+
+async function fetchJSON(path) {
+  const r = await fetch(apiUrl(path));
+  if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+  return await r.json();
+}
+
+function setBadge(el, text, kind) {
+  el.textContent = text;
+  el.className = "badge " + kind;
+}
+
+async function refresh() {
+  try {
+    const [status, equity, journal, training] = await Promise.all([
+      fetchJSON("/api/status"),
+      fetchJSON("/api/equity"),
+      fetchJSON("/api/journal?limit=20"),
+      fetchJSON("/api/training"),
+    ]);
+
+    // ----- top status badge -----
+    if (status.training_active) {
+      setBadge($("statusBadge"), "training", "training");
+    } else if (status.heartbeat_age_sec == null) {
+      setBadge($("statusBadge"), "idle", "idle");
+    } else if (status.heartbeat_age_sec < 60) {
+      setBadge($("statusBadge"), "alive", "alive");
+    } else {
+      setBadge($("statusBadge"), "stale", "stale");
+    }
+    $("lastUpdated").textContent = new Date().toLocaleTimeString();
+
+    // ----- top cards -----
+    const hb = status.heartbeat || {};
+    const start = status.starting_balance;
+    $("balance").textContent = fmtMoney(hb.balance);
+    $("equity").textContent  = fmtMoney(hb.equity);
+    $("startingBalance").textContent = "start: " + fmtMoney(start);
+    if (hb.equity != null && start != null) {
+      const delta = hb.equity - start;
+      const dEl = $("equityDelta");
+      dEl.textContent = (delta >= 0 ? "+" : "") + delta.toFixed(2) + " (" + ((delta/start)*100).toFixed(2) + "%)";
+      dEl.className = "sub " + (delta >= 0 ? "pos" : "neg");
+    }
+    $("openPositions").textContent = hb.open_positions ?? "—";
+    $("lastBar").textContent = "last bar: " + (hb.last_bar_ts || "—");
+
+    const ts = status.trade_summary || {};
+    $("winRate").textContent = fmtPct(ts.win_rate);
+    $("tradesSummary").textContent = `${ts.wins ?? 0} wins / ${ts.losses ?? 0} losses · net ${fmtMoney(ts.net_pnl)}`;
+
+    // ----- heartbeat table -----
+    const hbRows = Object.entries(hb).map(([k, v]) =>
+      `<tr><td>${k}</td><td>${typeof v === "number" ? Number(v).toLocaleString() : (v ?? "—")}</td></tr>`
+    ).join("");
+    $("hbTable").innerHTML = hbRows || `<tr><td colspan="2">no heartbeat yet</td></tr>`;
+
+    // ----- equity curve -----
+    if (!equityChart) makeEquityChart();
+    equityChart.data.labels = equity.map(p => new Date(p.ts).toLocaleString());
+    equityChart.data.datasets[0].data = equity.map(p => p.balance);
+    equityChart.update("none");
+
+    // ----- journal table -----
+    if (journal.length) {
+      $("journalTable").innerHTML = journal.map(e => {
+        const pnl = e.pnl == null ? "—" : Number(e.pnl).toFixed(2);
+        const pnlCls = e.pnl == null ? "" : (e.pnl >= 0 ? "pos" : "neg");
+        const price = e.exit ?? e.entry ?? "";
+        const side = e.side === 1 ? "BUY" : e.side === -1 ? "SELL" : "";
+        const t = e.ts ? new Date(e.ts).toLocaleTimeString() : "";
+        return `<tr><td>${t}</td><td>${e.event}</td><td>${side}</td><td>${price}</td><td class="${pnlCls}">${pnl}</td><td>${e.balance ?? ""}</td></tr>`;
+      }).join("");
+    } else {
+      $("journalTable").innerHTML = `<tr><td colspan="6">no events yet</td></tr>`;
+    }
+
+    // ----- training chart -----
+    if (!trainingChart) makeTrainingChart();
+    const gens = training.generations || [];
+    trainingChart.data.labels = gens.map(g => "g" + g.generation);
+    trainingChart.data.datasets[0].data = gens.map(g => g.val?.win_rate ?? 0);
+    trainingChart.data.datasets[1].data = gens.map(g => g.fitness ?? 0);
+    trainingChart.update("none");
+
+    if (training.meta) {
+      const m = training.meta;
+      const last = gens[gens.length - 1];
+      const done = training.done;
+      let txt = `target ${(m.target_win_rate*100).toFixed(0)}% · pop ${m.population_size} · max gen ${m.max_generations}`;
+      if (last) txt += ` · gen ${last.generation} · val WR ${(last.val.win_rate*100).toFixed(1)}% · fit ${last.fitness.toFixed(2)}`;
+      if (done) txt += done.target_hit ? " · DONE (target hit)" : " · stopped (target not hit)";
+      $("trainingMeta").textContent = txt;
+    } else {
+      $("trainingMeta").textContent = "no training run yet";
+    }
+  } catch (err) {
+    console.error(err);
+    setBadge($("statusBadge"), "error", "stale");
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

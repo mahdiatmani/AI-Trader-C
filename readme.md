@@ -216,6 +216,78 @@ refuses to start without it. Before launching:
 
 ---
 
+## Web dashboard
+
+A small Flask app at `dashboard/app.py` that reads the bot's log files
+and serves a live page on the public IP. It is **read-only** — it never
+touches the bot or the model — so you can safely run it on the same
+host as the trader.
+
+### Start it
+
+```bash
+cd ~/AI-Trader-C
+source .venv/bin/activate
+pip install -r requirements.txt              # picks up flask
+python -m dashboard.app --host 0.0.0.0 --port 8080
+```
+
+Then open `http://<your-public-ip>:8080`.
+
+The page auto-refreshes every 5 seconds and shows:
+- live status badge (alive · stale · training · idle)
+- balance, equity, equity delta, open positions, last bar
+- realized win rate, wins/losses, net PnL
+- equity curve chart
+- raw heartbeat keys
+- last 20 journal events
+- training chart: validation win rate + fitness per generation, with
+  the target line and the run's stop reason
+
+### Open the firewall
+
+A cloud VM blocks inbound ports by default. Two layers to open:
+
+```bash
+# 1. Ubuntu's local firewall (if ufw is on)
+sudo ufw allow 8080/tcp
+
+# 2. Your cloud provider's security group / network rules
+# (Oracle Cloud → Networking → Virtual Cloud Networks → Security Lists
+#  → Add Ingress Rule: source 0.0.0.0/0, TCP 8080)
+```
+
+### Lock it down (recommended on a public IP)
+
+The repo is private but the IP is reachable by anyone who guesses it.
+Set a token before launching the server:
+
+```bash
+export DASHBOARD_TOKEN='pick-a-long-random-string'
+python -m dashboard.app --host 0.0.0.0 --port 8080
+```
+
+Then visit `http://<public-ip>:8080/?token=pick-a-long-random-string`.
+The same token can also be passed as an `X-Dashboard-Token` HTTP header
+for API calls.
+
+### Run it under tmux (easy) or systemd (production)
+
+Quickest — survives SSH disconnect:
+
+```bash
+tmux new -s dashboard
+source ~/AI-Trader-C/.venv/bin/activate
+DASHBOARD_TOKEN=... python -m dashboard.app --host 0.0.0.0 --port 8080
+# Ctrl+B then D to detach
+```
+
+As a systemd service: copy `deploy/ai-trader.service`, change the
+`ExecStart=` to point at `dashboard.app`, and `systemctl enable --now`
+the second unit alongside the trader.
+
+---
+
 ## File reference
 
 | File                              | Role                                                  |

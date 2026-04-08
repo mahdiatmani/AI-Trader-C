@@ -20,16 +20,21 @@ for _d in (DATA_DIR, MODELS_DIR, LOGS_DIR):
 
 @dataclass
 class InstrumentConfig:
-    symbol: str = "XAUUSD"
+    # XM Global lists spot gold as `GOLD`, not `XAUUSD`. The MetaApi
+    # live broker will use this exact name when placing orders.
+    symbol: str = "GOLD"
     # 1 standard lot = 100 oz of gold. We model positions in *units* (oz)
     # so risk math is independent of broker lot conventions.
     contract_size: float = 100.0
-    # Quote currency per 1.00 price move per 1 unit (oz). For XAUUSD this
-    # is exactly 1 USD per 1 USD move per ounce.
+    # Quote currency per 1.00 price move per 1 unit (oz). For gold this
+    # is exactly 1 USD per 1 USD move per ounce (verified via
+    # symbol_info.trade_tick_value / trade_tick_size on XM).
     value_per_point: float = 1.0
-    # Typical XAUUSD spread on a retail account, in price units (USD).
-    spread: float = 0.30
-    # Commission per round-turn per ounce. Most XM accounts are spread-only.
+    # Real XM spread on GOLD observed via symbol_info.spread (~48 points
+    # at 0.01/point = $0.48). Slightly conservative.
+    spread: float = 0.50
+    # Commission per round-turn per ounce. XM Global standard accounts
+    # are spread-only — keep at 0 unless you're on a Zero account.
     commission_per_unit: float = 0.0
     # Minimum stop distance the broker will accept (price units).
     min_stop_distance: float = 1.0

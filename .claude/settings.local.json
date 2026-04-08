@@ -4,7 +4,10 @@
       "Bash(python -c ':*)",
       "Bash(rm ga_bot/models/best_chromosome.json)",
       "Bash(find . -type d -name __pycache__ -prune -exec rm -rf {} +)",
-      "Bash(ls *.py requirements.txt)"
+      "Bash(ls *.py requirements.txt)",
+      "Bash(python -c \"import MetaTrader5 as mt5; print\\('mt5 ok', mt5.__version__\\)\")",
+      "Bash(python -c \"import yfinance; print\\('yf ok', yfinance.__version__\\)\")",
+      "Bash(python:*)"
     ]
   }
 }

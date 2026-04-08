@@ -1,0 +1,7 @@
+numpy>=1.24
+pandas>=2.0
+pandas-ta>=0.3.14b
+tqdm>=4.65
+# For live trading on Ubuntu cloud (per deployment notes).
+# Install only when going live:
+# metaapi-cloud-sdk>=27.0.0

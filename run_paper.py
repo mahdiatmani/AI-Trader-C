@@ -25,7 +25,7 @@ from ga_bot.broker.paper import PaperBroker
 from ga_bot.chromosome import Chromosome
 from ga_bot.config import CONFIG, MODELS_DIR
 from ga_bot.data_loader import load_csv
-from ga_bot.trader import Trader
+from ga_bot.trader import Trader, parse_duration
 
 
 def _csv_replay_feed(df: pd.DataFrame):
@@ -62,6 +62,11 @@ def main() -> int:
     parser.add_argument("--model", default=str(MODELS_DIR / "best_chromosome.json"))
     parser.add_argument("--replay", help="CSV file to replay (offline paper test)")
     parser.add_argument("--live-feed", action="store_true", help="Use MetaApi quotes for paper execution")
+    parser.add_argument(
+        "--duration",
+        default=None,
+        help="Auto-stop after this elapsed time, e.g. 30m, 12h, 7d, 2w (live-feed only)",
+    )
     args = parser.parse_args()
 
     if not (args.replay or args.live_feed):
@@ -92,8 +97,12 @@ def main() -> int:
 
     feed = _live_feed_factory()
     broker = PaperBroker(bar_feed=feed)
-    trader = Trader(broker=broker, chromosome=chromosome)
-    print("Paper trading against live MetaApi feed. Ctrl+C to stop.")
+    max_runtime = parse_duration(args.duration) if args.duration else 0.0
+    trader = Trader(broker=broker, chromosome=chromosome, max_runtime_sec=max_runtime)
+    if max_runtime:
+        print(f"Paper trading against live MetaApi feed for {args.duration} (Ctrl+C to stop early).")
+    else:
+        print("Paper trading against live MetaApi feed. Ctrl+C to stop.")
     trader.run_forever()
     return 0
 

@@ -1,0 +1,44 @@
+[Unit]
+Description=GA XAUUSD Trading Bot (paper or live)
+Documentation=https://github.com/mahdiatmani/AI-Trader-C
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+
+# Adjust to wherever you cloned the repo on the Ubuntu box.
+WorkingDirectory=/opt/ai-trader
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/ai-trader.env
+
+# Default = paper trading on the live MetaApi feed, runs forever.
+# Override per-instance with `systemctl edit ai-trader.service` if you
+# want a different mode (replay, --duration, run_live.py, etc.).
+ExecStart=/opt/ai-trader/.venv/bin/python /opt/ai-trader/run_paper.py --live-feed
+
+# Restart on any failure or clean exit (e.g. when --duration elapses).
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Send SIGTERM first; the trader handles it and shuts the broker down
+# cleanly. After 30s, escalate to SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+# Logs go to the systemd journal — view with `journalctl -u ai-trader -f`.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

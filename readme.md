@@ -151,12 +151,27 @@ pip install metaapi-cloud-sdk
 export METAAPI_TOKEN=...
 export METAAPI_ACCOUNT_ID=...
 
+# Run forever (use Ctrl+C / SIGTERM to stop):
 python run_paper.py --live-feed
+
+# Or auto-stop after a fixed window:
+python run_paper.py --live-feed --duration 14d
 ```
 
 This pulls real prices from MetaApi but routes every order through
 `PaperBroker`, so the account balance never moves. Run it for at least
 **two weeks** across different market conditions.
+
+The loop writes a liveness file every tick to `logs/heartbeat.json`:
+
+```json
+{"status": "alive", "ts": "2026-04-15T10:25:03+00:00", "tick": 1042,
+ "balance": 251.34, "equity": 251.10, "open_positions": 1,
+ "last_bar_ts": "2026-04-15 10:20:00"}
+```
+
+Use that file as your "is the bot alive?" signal — anything older than
+~2× `poll_seconds` means the loop has died.
 
 **Gate:**
 - positive PnL on the journal,
@@ -171,7 +186,11 @@ This pulls real prices from MetaApi but routes every order through
 **Goal:** real money, small size, full safety rails.
 
 ```bash
+# Run forever:
 python run_live.py --i-understand-the-risk
+
+# Or cap the run (recommended for the very first live session):
+python run_live.py --i-understand-the-risk --duration 24h
 ```
 
 The `--i-understand-the-risk` flag is intentional — `run_live.py`
@@ -244,6 +263,102 @@ charges, then re-train.
 You haven't installed it (`pip install metaapi-cloud-sdk`). The
 training and paper-replay paths don't need it — only `--live-feed` and
 `run_live.py` do.
+
+---
+
+## Long-running deployment on Ubuntu (systemd)
+
+**Goal:** the bot survives SSH disconnects, reboots, and crashes, with
+log rotation, a heartbeat file, and a clean way to stop it.
+
+### One-shot install
+
+```bash
+# On the Ubuntu box (as root or with sudo):
+sudo mkdir -p /opt
+sudo git clone https://github.com/mahdiatmani/AI-Trader-C.git /opt/ai-trader
+sudo bash /opt/ai-trader/deploy/install.sh
+```
+
+The installer:
+1. apt-installs Python + build deps,
+2. creates a `trader` system user,
+3. builds `/opt/ai-trader/.venv` and installs `requirements.txt` +
+   `metaapi-cloud-sdk`,
+4. drops a credentials template at `/etc/ai-trader.env` (mode 600),
+5. installs `deploy/ai-trader.service` into systemd.
+
+### Configure secrets
+
+```bash
+sudo nano /etc/ai-trader.env
+# METAAPI_TOKEN=...
+# METAAPI_ACCOUNT_ID=...
+```
+
+This file is **not** in git, lives outside the repo, and is only
+readable by root + the `trader` group.
+
+### Train once, then enable the service
+
+```bash
+# Drop your CSV and train (one-off, takes minutes-to-hours):
+sudo cp ~/XAUUSD_M5.csv /opt/ai-trader/data/
+sudo -u trader /opt/ai-trader/.venv/bin/python /opt/ai-trader/train_ga.py --csv XAUUSD_M5.csv
+
+# Start the long-running service:
+sudo systemctl enable --now ai-trader.service
+```
+
+By default the unit runs `run_paper.py --live-feed` (paper trading on
+real prices). To switch modes, override the `ExecStart=` line:
+
+```bash
+sudo systemctl edit ai-trader.service
+# in the editor:
+[Service]
+ExecStart=
+ExecStart=/opt/ai-trader/.venv/bin/python /opt/ai-trader/run_live.py --i-understand-the-risk --duration 7d
+```
+
+### Operate it
+
+```bash
+# Live logs
+journalctl -u ai-trader -f
+
+# Snapshot of bot state
+cat /opt/ai-trader/logs/heartbeat.json
+
+# Trade journal (auto-rotated daily, capped at 10 MB per file, ~14 days kept)
+tail -f /opt/ai-trader/logs/paper_journal.jsonl
+
+# Stop / start / status
+sudo systemctl stop ai-trader
+sudo systemctl start ai-trader
+sudo systemctl status ai-trader
+```
+
+### Built-in long-run safeguards
+
+| Concern                       | Where it's handled                           |
+|-------------------------------|----------------------------------------------|
+| Process dies                  | `Restart=always` + `RestartSec=10` in systemd|
+| Disk fills from journal       | `JsonlJournal` daily rotation + 10 MB cap, 14 backups |
+| External liveness check      | `logs/heartbeat.json` updated every tick     |
+| Clean shutdown on `systemctl stop` | Trader handles SIGTERM, closes broker, writes `"status": "stopped"` |
+| Run for a fixed window       | `--duration 30m / 12h / 7d / 2w` on either entry script |
+| Daily DD blow-up              | `account.daily_dd_limit` halts new entries   |
+| Margin blow-up                | `account.max_margin_fraction` rejects orders |
+
+### Updating the bot later
+
+```bash
+cd /opt/ai-trader
+sudo -u trader git pull
+sudo -u trader .venv/bin/pip install -r requirements.txt
+sudo systemctl restart ai-trader
+```
 
 ---
 

@@ -11,7 +11,6 @@ offline or shadowing a live feed.
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +19,7 @@ from typing import Callable, List, Optional
 import pandas as pd
 
 from ..config import CONFIG, LOGS_DIR
+from ..journal import JsonlJournal
 from .base import Broker, Order, Position, Side
 
 # A bar feed is any zero-arg callable that returns the most recent bars
@@ -39,7 +39,7 @@ class PaperBroker(Broker):
         self._equity = self._balance
         self._positions: List[Position] = []
         self._journal_path = Path(journal_path) if journal_path else LOGS_DIR / "paper_journal.jsonl"
-        self._journal_path.parent.mkdir(parents=True, exist_ok=True)
+        self._journal = JsonlJournal(self._journal_path)
 
     # ----- lifecycle -----
     def connect(self) -> None:
@@ -153,5 +153,4 @@ class PaperBroker(Broker):
 
     # ----- internal -----
     def _log(self, payload: dict) -> None:
-        with self._journal_path.open("a") as f:
-            f.write(json.dumps(payload) + "\n")
+        self._journal.write(payload)

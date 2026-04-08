@@ -16,13 +16,18 @@ from pathlib import Path
 from ga_bot.broker.metaapi_live import MetaApiLiveBroker
 from ga_bot.chromosome import Chromosome
 from ga_bot.config import CONFIG, MODELS_DIR
-from ga_bot.trader import Trader
+from ga_bot.trader import Trader, parse_duration
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default=str(MODELS_DIR / "best_chromosome.json"))
     parser.add_argument("--i-understand-the-risk", action="store_true")
+    parser.add_argument(
+        "--duration",
+        default=None,
+        help="Auto-stop after this elapsed time, e.g. 12h, 7d, 2w. Omit to run forever.",
+    )
     args = parser.parse_args()
 
     if not args.i_understand_the_risk:
@@ -41,7 +46,10 @@ def main() -> int:
     )
 
     broker = MetaApiLiveBroker()
-    trader = Trader(broker=broker, chromosome=chromosome)
+    max_runtime = parse_duration(args.duration) if args.duration else 0.0
+    trader = Trader(broker=broker, chromosome=chromosome, max_runtime_sec=max_runtime)
+    if max_runtime:
+        print(f"Live trading for {args.duration} (Ctrl+C / SIGTERM to stop early).")
     trader.run_forever()
     return 0
 

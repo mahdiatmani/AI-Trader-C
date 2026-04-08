@@ -53,13 +53,13 @@ class AccountConfig:
 
 @dataclass
 class GAConfig:
-    population_size: int = 80
-    max_generations: int = 200
-    elite_count: int = 4
+    population_size: int = 120
+    max_generations: int = 300
+    elite_count: int = 6
     tournament_size: int = 4
     crossover_rate: float = 0.85
-    mutation_rate: float = 0.15      # per-gene probability
-    mutation_sigma: float = 0.15     # gaussian step size in normalized [0,1] space
+    mutation_rate: float = 0.20      # per-gene probability
+    mutation_sigma: float = 0.18     # gaussian step size in normalized [0,1] space
     random_seed: int = 42
 
     # Stopping criteria — training halts when ALL of these are met on
@@ -98,8 +98,11 @@ class BacktestConfig:
     # sub-folds. Fitness uses the WORST fold + val as the bottleneck for
     # every base metric (return, DD, PF, worst trade). This forces the
     # GA to find a chromosome that survives multiple sub-regimes inside
-    # train, not one that overfits to a single trend within it.
-    n_train_folds: int = 4
+    # train, not one that overfits to a single trend within it. Bumped
+    # 4 → 5 after the gen-200 run had nearly identical fold DDs (which
+    # made the divergence penalty toothless) — more, smaller folds give
+    # the bottleneck more chances to expose a fragile chromosome.
+    n_train_folds: int = 5
 
 
 @dataclass

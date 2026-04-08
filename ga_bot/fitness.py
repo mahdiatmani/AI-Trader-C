@@ -100,30 +100,37 @@ def score(
     calmar_term = float(np.tanh(base_calmar / 6.0))      # knee ~Calmar 12
 
     # ----- safety penalties -----
-    # Drawdown: free up to 10 %, quadratic above. Uses the DEEPEST DD
+    # Drawdown: free up to 7 %, quadratic above. Uses the DEEPEST DD
     # across all slices so a huge fold drawdown can't be hidden by a
-    # tame val drawdown.
-    dd_excess = max(0.0, base_dd - 0.10)
-    dd_penalty = (dd_excess * dd_excess) * 10.0
+    # tame val drawdown. The cap was tightened from 10 % → 7 % after
+    # the gen-200 run came out with 10/11 % DD on train/val but
+    # blew up to 27 % on the held-out test slice — the GA needs to
+    # be pushed toward strategies with headroom for regime change.
+    dd_excess = max(0.0, base_dd - 0.07)
+    dd_penalty = (dd_excess * dd_excess) * 25.0
 
-    # Worst single trade: free up to 3 % of starting capital, quadratic
+    # Worst single trade: free up to 2 % of starting capital, quadratic
     # above. Uses the LARGEST worst-trade across all slices.
-    worst_excess = max(0.0, base_worst - 0.03)
-    worst_penalty = (worst_excess * worst_excess) * 20.0
+    worst_excess = max(0.0, base_worst - 0.02)
+    worst_penalty = (worst_excess * worst_excess) * 30.0
 
     # ----- divergence penalties -----
     # Return divergence: every slice should produce a similar return.
     # A spread between best and worst slice means the chromosome relies
-    # on one regime. Squared so 5 % spread is free-ish (0.0125) but a
-    # 50 % spread costs 1.25.
+    # on one regime. Squared so 5 % spread is free-ish (0.0025) but a
+    # 50 % spread costs 0.25.
     ret_spread = max(rets) - min(rets)
-    ret_divergence_penalty = ret_spread * ret_spread * 0.5
+    ret_divergence_penalty = ret_spread * ret_spread * 1.0
 
     # DD divergence: same idea. A chromosome with one calm fold (5 %
     # DD) and one wild fold (25 % DD) is fragile even if both made
-    # money. 20 % spread → penalty 0.4.
+    # money. Penalty multiplier bumped from 10 → 20 because the gen-200
+    # run had train DD ≈ val DD (spread 0.013, penalty 0.0017) but blew
+    # up on the held-out test slice — small in-sample spreads aren't
+    # informative when a regime shift is coming, so we have to crush
+    # any visible DD spread harder.
     dd_spread = max(dds) - min(dds)
-    dd_divergence_penalty = dd_spread * dd_spread * 10.0
+    dd_divergence_penalty = dd_spread * dd_spread * 20.0
 
     base = 3.0 * profit_term + 3.0 * calmar_term
     return float(

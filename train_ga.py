@@ -33,8 +33,11 @@ TRAINING_LOG_PATH = LOGS_DIR / "training.jsonl"
 
 
 def _fmt_split(label: str, m: dict) -> str:
+    start = float(CONFIG.account.starting_balance)
+    end_balance = start * (1.0 + m.get("return_pct", 0.0))
     return (
-        f"{label} ret={m.get('return_pct', 0.0)*100:+6.1f}% "
+        f"{label} bal=${end_balance:8.2f} "
+        f"ret={m.get('return_pct', 0.0)*100:+6.1f}% "
         f"dd={m.get('max_dd', 0.0)*100:5.1f}% "
         f"worst={m.get('worst_trade_pct', 0.0)*100:4.1f}% "
         f"pf={m.get('profit_factor', 0.0):4.2f} "
@@ -146,10 +149,14 @@ def main() -> int:
     test_pf = best.metrics.get("test_profit_factor", 0.0)
     test_n = int(best.metrics.get("test_trades", 0))
 
+    start_bal = float(CONFIG.account.starting_balance)
+    test_bal = start_bal * (1.0 + test_ret)
+
     print("\n=== TRAINING DONE ===")
     print(f"Saved to: {args.out}")
     print(
-        f"Held-out TEST: return={test_ret*100:+.2f}%  "
+        f"Held-out TEST: start=${start_bal:.2f} -> end=${test_bal:.2f}  "
+        f"({test_ret*100:+.2f}%)  "
         f"max_dd={test_dd*100:.2f}%  "
         f"worst_trade={test_worst*100:.2f}%  "
         f"PF={test_pf:.2f}  "

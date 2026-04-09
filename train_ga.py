@@ -89,6 +89,10 @@ def main() -> int:
         "--max-worst-trade", type=float, default=None,
         help="Max acceptable single-trade loss as a fraction of starting capital",
     )
+    parser.add_argument(
+        "--balance", type=float, default=None,
+        help="Starting account balance in USD (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     if args.generations is not None:
@@ -101,6 +105,8 @@ def main() -> int:
         CONFIG.ga.max_acceptable_dd = args.max_dd
     if args.max_worst_trade is not None:
         CONFIG.ga.max_worst_trade_pct = args.max_worst_trade
+    if args.balance is not None:
+        CONFIG.account.starting_balance = args.balance
 
     # Reset training log so the dashboard reflects this run, not previous ones.
     if TRAINING_LOG_PATH.exists():

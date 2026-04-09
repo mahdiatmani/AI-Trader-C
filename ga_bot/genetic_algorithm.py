@@ -150,19 +150,30 @@ class GeneticAlgorithm:
                 if len(new_pop) < self.cfg.population_size:
                     new_pop.append(c2)
 
-            # ----- stagnation injection: drop in fresh blood if the
-            # best fitness hasn't moved in a while. Elites are kept so
-            # we never lose the current champion. -----
+            # ----- stagnation injection: guided perturbation + random -----
+            # Pure random injection failed (gen-300 run had 36-gen
+            # plateaus) because random chromosomes start too far behind
+            # the current elites. Fix: 70% of injected slots get a
+            # *heavily perturbed* copy of a top-10 chromosome (explores
+            # the neighborhood of known-good solutions), 30% stay random
+            # (maintains diversity for escaping local basins entirely).
             stagnated_for = gen - last_improvement_gen
             if stagnated_for >= STAGNATION_PATIENCE:
                 inject_n = int(self.cfg.population_size * STAGNATION_INJECT_FRACTION)
-                # Replace the WORST inject_n non-elite slots with random
-                # chromosomes. The best are at the front; the worst are
-                # at the back.
                 if inject_n > 0:
-                    for i in range(self.cfg.population_size - inject_n,
-                                   self.cfg.population_size):
-                        new_pop[i] = Chromosome.random(self.rng)
+                    n_guided = int(inject_n * 0.7)
+                    n_random = inject_n - n_guided
+                    top_k = min(10, len(pop))
+                    inject_sigma = self.cfg.mutation_sigma * 3.0
+                    idx = self.cfg.population_size - inject_n
+                    for j in range(n_guided):
+                        parent = pop[self.rng.integers(0, top_k)]
+                        noise = self.rng.normal(0.0, inject_sigma, size=N_GENES)
+                        new_pop[idx + j] = Chromosome(
+                            genes=np.clip(parent.genes + noise, 0.0, 1.0)
+                        )
+                    for j in range(n_random):
+                        new_pop[idx + n_guided + j] = Chromosome.random(self.rng)
                 last_improvement_gen = gen  # reset patience clock
 
             # ----- evaluate (skip already-evaluated elites) -----

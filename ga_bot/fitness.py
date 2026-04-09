@@ -99,20 +99,18 @@ def score(
     base_calmar = base_ret / max(base_dd, 1e-3)
     calmar_term = float(np.tanh(base_calmar / 6.0))      # knee ~Calmar 12
 
-    # ----- safety penalties -----
-    # Drawdown: free up to 7 %, quadratic above. Uses the DEEPEST DD
-    # across all slices so a huge fold drawdown can't be hidden by a
-    # tame val drawdown. The cap was tightened from 10 % → 7 % after
-    # the gen-200 run came out with 10/11 % DD on train/val but
-    # blew up to 27 % on the held-out test slice — the GA needs to
-    # be pushed toward strategies with headroom for regime change.
+    # ----- safety penalties (linear + quadratic) -----
+    # Pure quadratic was too flat near the cap (DD=8.2% with 7% cap
+    # produced only 0.004 penalty — no gradient). Adding a linear term
+    # creates immediate pressure the moment DD crosses the cap.
+    #
+    # Drawdown: free up to 7 %, linear+quadratic above.
     dd_excess = max(0.0, base_dd - 0.07)
-    dd_penalty = (dd_excess * dd_excess) * 25.0
+    dd_penalty = dd_excess * 5.0 + (dd_excess * dd_excess) * 25.0
 
-    # Worst single trade: free up to 2 % of starting capital, quadratic
-    # above. Uses the LARGEST worst-trade across all slices.
+    # Worst single trade: free up to 2 %, linear+quadratic above.
     worst_excess = max(0.0, base_worst - 0.02)
-    worst_penalty = (worst_excess * worst_excess) * 30.0
+    worst_penalty = worst_excess * 5.0 + (worst_excess * worst_excess) * 30.0
 
     # ----- divergence penalties -----
     # Return divergence: every slice should produce a similar return.
@@ -132,7 +130,15 @@ def score(
     dd_spread = max(dds) - min(dds)
     dd_divergence_penalty = dd_spread * dd_spread * 20.0
 
-    base = 3.0 * profit_term + 3.0 * calmar_term
+    # ----- profit factor bonus -----
+    # PF only acted as a binary gate (>1.0 or not). The GA had no
+    # gradient toward the 1.5 PF stop target. Adding a direct term
+    # so PF improvement is rewarded. Clamped to [1.0, 3.0] so
+    # extreme PFs on few trades don't dominate.
+    pf_clamped = min(max(base_pf, 1.0), 3.0)
+    pf_term = float(np.tanh((pf_clamped - 1.0) * 1.5))  # 0 at PF=1, ~0.9 at PF=2.5
+
+    base = 3.0 * profit_term + 3.0 * calmar_term + 1.5 * pf_term
     return float(
         base * activity
         - dd_penalty

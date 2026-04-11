@@ -21,6 +21,7 @@ import pandas as pd
 
 from . import indicators as ind
 from .chromosome import Chromosome
+from .config import CONFIG
 
 
 @dataclass
@@ -92,6 +93,21 @@ class Strategy:
         skip = (atr_v / close.replace(0.0, np.nan)) < p["min_atr_pct"]
         skip = skip.fillna(True)
         decision[skip] = 0
+
+        # ----- session filter -----
+        # Only allow new entries inside the configured UTC window.
+        # Exits (SL/TP) are not gated — the backtester handles those
+        # on any bar, regardless of session, because letting a losing
+        # position run outside the session is the opposite of scalping.
+        sess = CONFIG.session
+        if sess.start_hour != 0 or sess.end_hour != 24:
+            hours = df.index.hour
+            if sess.start_hour <= sess.end_hour:
+                in_session = (hours >= sess.start_hour) & (hours < sess.end_hour)
+            else:
+                # wrap-around window (e.g. 22:00-04:00)
+                in_session = (hours >= sess.start_hour) | (hours < sess.end_hour)
+            decision[~in_session] = 0
 
         return StrategyOutput(
             signal=score, atr=atr_v, decision=decision, skip_low_vol=skip

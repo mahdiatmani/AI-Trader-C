@@ -25,7 +25,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ga_bot.config import CONFIG, LOGS_DIR, MODELS_DIR
+from ga_bot.config import CONFIG, LOGS_DIR, MODELS_DIR, SESSION_PRESETS
 from ga_bot.data_loader import load_csv, split_train_folds_val_test
 from ga_bot.genetic_algorithm import GeneticAlgorithm, GenerationLog
 
@@ -93,6 +93,15 @@ def main() -> int:
         "--balance", type=float, default=None,
         help="Starting account balance in USD (default: %(default)s)",
     )
+    parser.add_argument(
+        "--session", type=str, default=None,
+        choices=sorted(SESSION_PRESETS.keys()),
+        help=(
+            "Intraday trading session (UTC). Only entries inside the "
+            "window fire. Presets: "
+            + ", ".join(f"{k}={v[0]:02d}-{v[1]:02d}" for k, v in sorted(SESSION_PRESETS.items()))
+        ),
+    )
     args = parser.parse_args()
 
     if args.generations is not None:
@@ -107,6 +116,11 @@ def main() -> int:
         CONFIG.ga.max_worst_trade_pct = args.max_worst_trade
     if args.balance is not None:
         CONFIG.account.starting_balance = args.balance
+    if args.session is not None:
+        start, end = SESSION_PRESETS[args.session]
+        CONFIG.session.name = args.session
+        CONFIG.session.start_hour = start
+        CONFIG.session.end_hour = end
 
     # Reset training log so the dashboard reflects this run, not previous ones.
     if TRAINING_LOG_PATH.exists():
@@ -124,6 +138,9 @@ def main() -> int:
             "min_trades_for_stop": CONFIG.ga.min_trades_for_stop,
             "max_generations": CONFIG.ga.max_generations,
             "population_size": CONFIG.ga.population_size,
+            "session": CONFIG.session.name,
+            "session_start_utc": CONFIG.session.start_hour,
+            "session_end_utc": CONFIG.session.end_hour,
         }) + "\n")
 
     print(f"Loading {args.csv} ...")
@@ -136,6 +153,8 @@ def main() -> int:
         f"val={len(val_df):,}  test={len(test_df):,}\n"
         f"Symbol={CONFIG.instrument.symbol}  TF={CONFIG.trading.timeframe_minutes}m  "
         f"Leverage=1:{CONFIG.account.leverage}  Start=${CONFIG.account.starting_balance}\n"
+        f"Session: {CONFIG.session.name} "
+        f"({CONFIG.session.start_hour:02d}:00-{CONFIG.session.end_hour:02d}:00 UTC)\n"
         f"Fitness rule: every train fold AND val must be profitable; base "
         f"metrics use the WORST slice across all {len(train_folds)+1}.\n"
         f"Stop criterion (TEST set, fully held out): "

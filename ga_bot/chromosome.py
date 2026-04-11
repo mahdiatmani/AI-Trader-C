@@ -31,9 +31,11 @@ GENE_SCHEMA: List[Tuple[str, float, float, str]] = [
     ("macd_signal",     5,    15,   "int"),
     ("atr_period",      5,    30,   "int"),
 
-    # Risk / sizing
-    ("sl_atr_mult",     0.5,  5.0,  "float"),
-    ("tp_atr_mult",     1.0,  10.0, "float"),
+    # Risk / sizing — tightened for M5 scalping: quick in/out, TP
+    # capped at ~3x ATR so winners close fast instead of riding multi-
+    # hour swings. SL stays tight (≤2.5 ATR) so losers also exit fast.
+    ("sl_atr_mult",     0.5,  2.5,  "float"),
+    ("tp_atr_mult",     0.8,  3.0,  "float"),
     ("risk_pct",        0.25, 2.0,  "float"),  # % of equity per trade
     ("min_atr_pct",     0.0,  0.005,"float"),  # skip if ATR/price below this
 

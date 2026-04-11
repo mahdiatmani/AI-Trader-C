@@ -34,7 +34,11 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         # Try the first column as the timestamp.
         first = df.columns[0]
         df = df.rename(columns={first: "timestamp"})
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    # Always coerce to datetime — the column may have come from any of
+    # the branches above and be strings, ints, or already datetime64.
+    # Without this, the DataFrame index ends up as a plain Index of
+    # strings and downstream .hour / .date() access silently breaks.
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     df = df.dropna(subset=["timestamp"]).set_index("timestamp").sort_index()
 
     if "volume" not in df.columns:

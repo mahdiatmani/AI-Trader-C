@@ -106,6 +106,42 @@ class BacktestConfig:
 
 
 @dataclass
+class SessionConfig:
+    """Intraday trading window (UTC).
+
+    The strategy only emits entry signals when the bar's UTC hour is
+    inside [start_hour, end_hour). Set start_hour=0 and end_hour=24 to
+    disable the filter (trade 24/7).
+
+    Preset windows available via the --session CLI flag:
+        asia     -> 00:00-08:00 UTC   (quiet, range-bound gold)
+        london   -> 07:00-16:00 UTC   (London session)
+        ny       -> 13:00-21:00 UTC   (New York session)
+        overlap  -> 13:00-16:00 UTC   (London-NY overlap, highest vol)
+        london_ny-> 07:00-21:00 UTC   (combined, most liquid)  <-- default
+        all      -> 00:00-24:00 UTC   (no filter)
+
+    The data is assumed to be timezone-naive UTC. If your CSV uses
+    broker server time (e.g. XM is GMT+2/+3), shift the hours
+    accordingly — e.g. London session becomes 09:00-18:00 on GMT+2.
+    """
+    name: str = "london_ny"
+    start_hour: int = 7    # inclusive, UTC
+    end_hour: int = 21     # exclusive, UTC
+
+
+# Preset windows, picked by the --session CLI flag.
+SESSION_PRESETS: dict[str, tuple[int, int]] = {
+    "asia":      (0, 8),
+    "london":    (7, 16),
+    "ny":        (13, 21),
+    "overlap":   (13, 16),
+    "london_ny": (7, 21),
+    "all":       (0, 24),
+}
+
+
+@dataclass
 class TradingConfig:
     timeframe_minutes: int = 5
     # How long to wait between bar polls in the live/paper loop.
@@ -121,6 +157,7 @@ class Config:
     ga: GAConfig = field(default_factory=GAConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
+    session: SessionConfig = field(default_factory=SessionConfig)
 
 
 CONFIG = Config()
